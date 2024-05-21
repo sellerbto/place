@@ -11,7 +11,10 @@ const apiKeys = new Set([
   "4a226908-aa3e-4a34-a57d-1f3d1f6cba84",
 ]);
 
+const validApiKey = 'abc';
+
 const colors = [
+  "#6daccc",
   "#140c1c",
   "#442434",
   "#30346d",
@@ -31,7 +34,7 @@ const colors = [
 ];
 
 const size = 256;
-// place(x, y) := place[x + y * size]
+// place(x, y) := place[x + y * size] okay
 const place = Array(size * size).fill(null);
 for (const [colorIndex, colorValue] of colors.entries()) {
   for (let dx = 0; dx < size; dx++) {
@@ -42,6 +45,10 @@ for (const [colorIndex, colorValue] of colors.entries()) {
 const app = express();
 
 app.use(express.static(path.join(process.cwd(), "client")));
+
+app.get("/colors", (req, res) => {
+  res.send(colors);
+});
 
 app.get("/*", (_, res) => {
   res.send("Place(holder)");
@@ -54,9 +61,41 @@ const wss = new WebSocket.Server({
 });
 
 server.on("upgrade", (req, socket, head) => {
-  const url = new URL(req.url, req.headers.origin);
-  console.log(url);
+  if (validApiKey !== new URL(req.url, req.headers.origin).searchParams.get('apiKey')){
+    socket.destroy();
+    return;
+  }
+
   wss.handleUpgrade(req, socket, head, (ws) => {
-    wss.emit("connection", ws, req);
+      wss.emit("connection", ws, req);
   });
+});
+
+wss.on('connection', function connection(ws) {
+  ws.on('message', function message(data) {
+    data = JSON.parse(data);
+    if (colors.indexOf(data.payload.color) !== -1 &&
+        data.payload.x >= 0 &&
+        data.payload.x < size &&
+        data.payload.y >= 0 &&
+        data.payload.y < size)
+    {
+      place[data.payload.x + data.payload.y * size] = data.payload.color;
+
+      wss.clients.forEach(function each(client) {
+        if (client.readyState === WebSocket.OPEN) {
+          client.send(JSON.stringify({
+            'type': 'action',
+            'payload': {
+              'x': data.payload.x,
+              'y': data.payload.y,
+              'color': data.payload.color,
+            }}));
+        }
+      });
+    }
+
+  });
+
+  ws.send(JSON.stringify({'type': 'field', 'payload': place}));
 });
